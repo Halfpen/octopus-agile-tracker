@@ -1,0 +1,517 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Agile 電費追蹤</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;800&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: one column of instrument panels — price strip first, then the running bill, then the daily ledger. */
+:root{
+  --bg:#f3f4f8; --panel:#ffffff; --ink:#191b2e; --muted:#5d6180; --line:#dfe1ec;
+  --accent:#e0218a; --elec:#3b4cca; --gas:#f08c2e;
+  --cheap:#12a37a; --mid:#8a90b4; --dear:#e5a019; --peak:#d8394a;
+  --font:"Manrope",system-ui,-apple-system,"PingFang HK","Microsoft JhengHei",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#11121c; --panel:#1b1d2c; --ink:#eceefa; --muted:#9a9ebf; --line:#2c2f45;
+  --accent:#ff4fa8; --elec:#7d8bff; --gas:#ffa955;
+  --cheap:#2fd3a0; --mid:#6d7299; --dear:#f2b53a; --peak:#ff6170; color-scheme:dark}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 var(--font)}
+.wrap{max-width:1040px;margin:0 auto;padding-block:20px 60px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:grid;gap:16px}
+header{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:8px}
+h1{font-size:1.5rem;font-weight:800;margin:0;letter-spacing:-.01em}
+h1 span{color:var(--accent)}
+h2{font-size:1rem;margin:0 0 10px;font-weight:800;text-wrap:balance}
+.sub{color:var(--muted);font-size:.85rem}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px;min-width:0}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+button,select,input{font:inherit;color:inherit}
+button{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:6px 12px;cursor:pointer}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:700}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+input,select{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:7px 10px;min-width:0}
+label{display:grid;gap:4px;font-size:.82rem;color:var(--muted)}
+.form{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px}
+.kpi{display:grid;gap:2px}
+.kpi .lab{font-size:.75rem;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.kpi .val{font:600 1.7rem/1.1 var(--mono);font-variant-numeric:tabular-nums}
+.kpi .note{font-size:.8rem;color:var(--muted)}
+.chip{display:inline-block;padding:1px 8px;border-radius:99px;font:600 .75rem var(--mono);color:#fff}
+.chart{width:100%;height:auto;display:block}
+.chart text{fill:var(--muted);font:10px var(--mono)}
+.scroll{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums;font-size:.85rem}
+th,td{padding:6px 8px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}
+th:first-child,td:first-child{text-align:left}
+th{color:var(--muted);font-weight:600;font-size:.75rem;text-transform:uppercase;letter-spacing:.05em}
+tbody tr{cursor:pointer}
+tbody tr:hover,tbody tr.sel{background:color-mix(in srgb,var(--accent) 8%,transparent)}
+.mono{font-family:var(--mono)}
+.msg{padding:10px 12px;border-radius:8px;border:1px solid var(--line);font-size:.88rem}
+.msg.err{border-color:var(--peak);color:var(--peak)}
+.legend{display:flex;flex-wrap:wrap;gap:12px;font-size:.78rem;color:var(--muted)}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:-1px}
+details summary{cursor:pointer;font-weight:700}
+small.fine{color:var(--muted);font-size:.78rem;display:block;margin-top:8px}
+@media (prefers-reduced-motion:no-preference){.panel{transition:border-color .2s}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Agile <span>電費</span>追蹤</h1>
+    <div class="row">
+      <span class="sub" id="status">未連接</span>
+      <button id="refresh" type="button">重新整理</button>
+    </div>
+  </header>
+
+  <section class="panel" id="pricePanel">
+    <div class="row" style="justify-content:space-between">
+      <h2>今日 / 明日 Agile 電價（p/kWh，含VAT）</h2>
+      <div class="legend">
+        <span><i style="background:var(--cheap)"></i>&lt;15</span>
+        <span><i style="background:var(--mid)"></i>15–25</span>
+        <span><i style="background:var(--dear)"></i>25–35</span>
+        <span><i style="background:var(--peak)"></i>&gt;35</span>
+      </div>
+    </div>
+    <div class="kpis" id="priceKpis"></div>
+    <div class="scroll"><svg class="chart" id="priceChart"></svg></div>
+    <small class="fine">明日電價通常每日約 16:00 公佈。價格係公開數據，唔使 API key。</small>
+  </section>
+
+  <section class="panel" id="setupPanel">
+    <details id="setupDetails" open>
+      <summary>設定（API key、帳號、帳單週期）</summary>
+      <form id="setup" class="form" style="margin-top:12px">
+        <label>Octopus API key<input id="key" type="password" autocomplete="off" placeholder="sk_live_..."></label>
+        <label>帳戶號碼 Account number<input id="account" placeholder="A-XXXXXXXX"></label>
+        <label>帳單週期開始日（1 = 曆月）<input id="startDay" type="number" min="1" max="28" value="12"></label>
+        <label>燃氣讀數單位<select id="gasUnit"><option value="m3">m³（SMETS2 常見）</option><option value="kwh">kWh</option></select></label>
+        <label>燃氣熱值 Calorific value<input id="cv" type="number" step="0.1" value="39.9"></label>
+        <label>電 VAT 改變日期<input id="vatDate" type="date" value="2026-10-01"></label>
+        <label>電 VAT 改變前 %<input id="vatBefore" type="number" step="0.1" value="5"></label>
+        <label>電 VAT 改變後 %<input id="vatAfter" type="number" step="0.1" value="0"></label>
+        <label>燃氣 VAT %<input id="gasVat" type="number" step="0.1" value="5"></label>
+        <label style="grid-column:1/-1;display:flex;gap:8px;align-items:center;color:var(--ink)"><input id="remember" type="checkbox" checked> 喺呢部機記住設定（API key 只存喺你自己瀏覽器）</label>
+        <div class="row" style="grid-column:1/-1"><button class="primary" type="submit">儲存並載入帳單</button></div>
+      </form>
+      <small class="fine">API key 喺 octopus.energy → Account → Personal details → API access 攞。呢個 app 只會用佢讀取你嘅帳戶、讀數同電價，唔會傳去其他地方。</small>
+    </details>
+  </section>
+
+  <div id="msg"></div>
+
+  <section class="panel" id="billPanel" hidden>
+    <div class="row" style="justify-content:space-between;margin-bottom:10px">
+      <h2 id="cycleTitle" style="margin:0">本期帳單</h2>
+      <div class="row"><button id="prev" type="button">← 上期</button><button id="next" type="button">下期 →</button></div>
+    </div>
+    <div class="kpis" id="billKpis"></div>
+    <div class="legend" style="margin-top:14px"><span><i style="background:var(--elec)"></i>電</span><span><i style="background:var(--gas)"></i>燃氣</span><span>每日費用（£，含VAT及standing charge）</span></div>
+    <div class="scroll"><svg class="chart" id="dailyChart"></svg></div>
+  </section>
+
+  <section class="panel" id="dayPanel" hidden>
+    <h2 id="dayTitle">半小時明細</h2>
+    <div class="legend"><span><i style="background:var(--elec)"></i>用電 kWh</span><span><i style="background:var(--accent)"></i>電價 p/kWh</span></div>
+    <div class="scroll"><svg class="chart" id="dayChart"></svg></div>
+  </section>
+
+  <section class="panel" id="tablePanel" hidden>
+    <h2>每日明細（撳一行睇半小時用電）</h2>
+    <div class="scroll"><table>
+      <thead><tr><th>日期</th><th>電 kWh</th><th>電均價 p</th><th>電 £</th><th>燃氣 kWh</th><th>燃氣 £</th><th>合計 £</th></tr></thead>
+      <tbody id="dayRows"></tbody>
+    </table></div>
+    <small class="fine">金額已包括 standing charge 同 VAT，未計 Saving Sessions / Weekend Happy Hour 等 credit。智能電錶數據一般遲大約一日先上到 API。</small>
+  </section>
+</div>
+
+<script>
+const API = 'https://api.octopus.energy/v1';
+const TZ = 'Europe/London';
+const DEFAULT_PRODUCT = 'AGILE-24-10-01', DEFAULT_REGION = 'G'; // Electricity North West
+const $ = id => document.getElementById(id);
+const fmtDay = new Intl.DateTimeFormat('en-CA', {timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit'});
+const fmtHour = new Intl.DateTimeFormat('en-GB', {timeZone: TZ, hour: '2-digit', hourCycle: 'h23'});
+const fmtHM = new Intl.DateTimeFormat('en-GB', {timeZone: TZ, hour: '2-digit', minute: '2-digit', hourCycle: 'h23'});
+const fmtStamp = new Intl.DateTimeFormat('zh-HK', {timeZone: TZ, month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23'});
+const DAY = 86400e3;
+
+/* ---------- dates in Europe/London ---------- */
+const dayKey = ms => fmtDay.format(ms);
+function londonOffsetH(ms) {
+  let o = +fmtHour.format(ms) - new Date(ms).getUTCHours();
+  if (o < -12) o += 24; if (o > 12) o -= 24;
+  return o;
+}
+function midnight(key) {
+  const [y, m, d] = key.split('-').map(Number);
+  const u = Date.UTC(y, m - 1, d);
+  return u - londonOffsetH(u) * 3600e3;
+}
+function addDays(key, n) {
+  const [y, m, d] = key.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10);
+}
+function cycleFor(todayKey, startDay, shift) {
+  let [y, m, d] = todayKey.split('-').map(Number);
+  if (d < startDay) m -= 1;
+  m += shift;
+  const s = new Date(Date.UTC(y, m - 1, startDay)).toISOString().slice(0, 10);
+  const e = new Date(Date.UTC(y, m, startDay)).toISOString().slice(0, 10);
+  return {start: s, end: e}; // end exclusive
+}
+const shortDate = key => { const [, m, d] = key.split('-'); return `${+d}/${+m}`; };
+const weekday = key => '日一二三四五六'[new Date(key + 'T12:00:00Z').getUTCDay()];
+
+/* ---------- settings ---------- */
+const FIELDS = ['key', 'account', 'startDay', 'gasUnit', 'cv', 'vatDate', 'vatBefore', 'vatAfter', 'gasVat'];
+function loadSettings() {
+  try {
+    const s = JSON.parse(localStorage.getItem('agileTracker') || 'null');
+    if (s) FIELDS.forEach(f => { if (s[f] != null) $(f).value = s[f]; });
+    return !!(s && s.key && s.account);
+  } catch { return false; }
+}
+function readSettings() {
+  const s = {};
+  FIELDS.forEach(f => s[f] = $(f).value.trim());
+  s.startDay = Math.min(28, Math.max(1, parseInt(s.startDay) || 1));
+  s.account = s.account.toUpperCase();
+  try {
+    if ($('remember').checked) localStorage.setItem('agileTracker', JSON.stringify(s));
+    else localStorage.removeItem('agileTracker');
+  } catch {}
+  return s;
+}
+const elecVat = (s, key) => +(key >= s.vatDate ? s.vatAfter : s.vatBefore) || 0;
+
+/* ---------- API ---------- */
+async function getAll(url, key) {
+  let out = [];
+  while (url) {
+    let r;
+    try {
+      r = await fetch(url, {headers: key ? {Authorization: 'Basic ' + btoa(key + ':')} : {}});
+    } catch (e) {
+      throw new Error('連唔到 Octopus API。請確認有網絡，並用一般瀏覽器（Chrome / Safari / Edge）直接打開呢個檔案。');
+    }
+    if (r.status === 401 || r.status === 403) throw new Error('API key 或帳戶號碼唔正確（' + r.status + '）。');
+    if (r.status === 404) throw new Error('搵唔到資料（404）：' + url.replace(API, ''));
+    if (!r.ok) throw new Error('Octopus API 回覆錯誤 ' + r.status);
+    const j = await r.json();
+    if (!Array.isArray(j.results)) return j;
+    out = out.concat(j.results);
+    url = j.next;
+  }
+  return out;
+}
+const productOf = tariff => tariff.split('-').slice(2, -1).join('-');
+const qs = o => '?' + Object.entries(o).map(([k, v]) => k + '=' + encodeURIComponent(v)).join('&');
+
+// rates as sorted intervals [{s,e,v}] (v = pence exc VAT)
+async function fetchRates(kind, tariff, which, from, to) {
+  const url = `${API}/products/${productOf(tariff)}/${kind}-tariffs/${tariff}/${which}/` +
+    qs({period_from: new Date(from).toISOString(), period_to: new Date(to).toISOString(), page_size: 1500});
+  const res = await getAll(url);
+  return res.map(r => ({s: Date.parse(r.valid_from), e: r.valid_to ? Date.parse(r.valid_to) : Infinity, v: r.value_exc_vat}));
+}
+async function ratesForAgreements(kind, agreements, which, from, to) {
+  let list = [];
+  for (const a of agreements) {
+    const af = Math.max(from, Date.parse(a.valid_from)), at = Math.min(to, a.valid_to ? Date.parse(a.valid_to) : Infinity);
+    if (af < at) list = list.concat(await fetchRates(kind, a.tariff_code, which, af, at));
+  }
+  return list.sort((a, b) => a.s - b.s);
+}
+function lookup(list, t) {
+  let lo = 0, hi = list.length - 1, best = -1;
+  while (lo <= hi) { const mid = (lo + hi) >> 1; if (list[mid].s <= t) { best = mid; lo = mid + 1; } else hi = mid - 1; }
+  return best >= 0 && t < list[best].e ? list[best].v : null;
+}
+async function fetchConsumption(kind, point, from, to, key) {
+  const id = kind === 'electricity' ? point.mpan : point.mprn;
+  const meters = (point.meters || []).filter(m => m.serial_number).reverse();
+  for (const m of meters) {
+    const url = `${API}/${kind}-meter-points/${id}/meters/${m.serial_number}/consumption/` +
+      qs({period_from: new Date(from).toISOString(), period_to: new Date(to).toISOString(), page_size: 25000, order_by: 'period'});
+    try {
+      const rows = await getAll(url, key);
+      if (rows.length) return rows;
+    } catch (e) { if (!/404/.test(e.message)) throw e; }
+  }
+  return [];
+}
+
+/* ---------- state ---------- */
+let S = null, ACCOUNT = null, shift = 0, CYCLE = null, selectedDay = null;
+let tariffCode = `E-1R-${DEFAULT_PRODUCT}-${DEFAULT_REGION}`;
+
+function setStatus(t) { $('status').textContent = t; }
+function showMsg(text, err) { $('msg').innerHTML = text ? `<div class="msg ${err ? 'err' : ''}"></div>` : ''; if (text) $('msg').firstChild.textContent = text; }
+const band = p => p < 15 ? 'var(--cheap)' : p < 25 ? 'var(--mid)' : p < 35 ? 'var(--dear)' : 'var(--peak)';
+const gbp = n => '£' + n.toFixed(2);
+
+/* ---------- price panel ---------- */
+async function loadPrices() {
+  const today = dayKey(Date.now());
+  const from = midnight(today), to = midnight(addDays(today, 2));
+  const s = S || readSettingsNoSave();
+  const rates = (await fetchRates('electricity', tariffCode, 'standard-unit-rates', from, to))
+    .map(r => ({...r, p: r.v * (1 + elecVat(s, dayKey(r.s)) / 100)}));
+  const now = Date.now();
+  const cur = rates.find(r => r.s <= now && now < r.e);
+  const future = rates.filter(r => r.e > now);
+  // cheapest upcoming 2-hour window (4 slots)
+  let best = null;
+  for (let i = 0; i + 4 <= future.length; i++) {
+    const w = future.slice(i, i + 4);
+    if (w.some((r, j) => j && r.s !== w[j - 1].e)) continue;
+    const avg = w.reduce((a, r) => a + r.p, 0) / 4;
+    if (!best || avg < best.avg) best = {avg, s: w[0].s, e: w[3].e};
+  }
+  const peak = future.reduce((a, r) => (!a || r.p > a.p ? r : a), null);
+  const neg = future.filter(r => r.p < 0).length;
+  const lastDay = rates.length ? dayKey(rates[rates.length - 1].s) : today;
+  $('priceKpis').innerHTML = [
+    kpi('而家', cur ? cur.p.toFixed(2) + 'p' : '—', cur ? `${fmtHM.format(cur.s)}–${fmtHM.format(cur.e)} <span class="chip" style="background:${band(cur.p)}">${cur.p < 15 ? '平' : cur.p < 25 ? '一般' : cur.p < 35 ? '貴' : '好貴'}</span>` : ''),
+    kpi('最平連續 2 小時', best ? best.avg.toFixed(2) + 'p' : '—', best ? `${shortDate(dayKey(best.s))} ${fmtHM.format(best.s)}–${fmtHM.format(best.e)}` : ''),
+    kpi('接落最貴', peak ? peak.p.toFixed(2) + 'p' : '—', peak ? `${shortDate(dayKey(peak.s))} ${fmtHM.format(peak.s)}` : ''),
+    kpi('負電價時段', String(neg), neg ? '用電反而有錢收' : (lastDay === today ? '明日電價未公佈' : '已包括明日'))
+  ].join('');
+  drawPriceChart(rates, now);
+}
+function readSettingsNoSave() { const s = {}; FIELDS.forEach(f => s[f] = $(f).value.trim()); return s; }
+const kpi = (lab, val, note) => `<div class="kpi"><span class="lab">${lab}</span><span class="val">${val}</span><span class="note">${note || ''}</span></div>`;
+
+function axisY(min, max, step) { const out = []; for (let v = Math.ceil(min / step) * step; v <= max; v += step) out.push(v); return out; }
+
+function drawPriceChart(rates, now) {
+  const svg = $('priceChart');
+  const W = Math.max(640, rates.length * 9), H = 220, L = 34, R = 8, T = 10, B = 26;
+  if (!rates.length) { svg.setAttribute('viewBox', `0 0 ${W} 40`); svg.innerHTML = `<text x="0" y="24">未有電價數據</text>`; return; }
+  const vals = rates.map(r => r.p);
+  const lo = Math.min(0, Math.floor(Math.min(...vals) / 10) * 10), hi = Math.max(10, Math.ceil(Math.max(...vals) / 10) * 10);
+  const y = v => T + (hi - v) / (hi - lo) * (H - T - B);
+  const bw = (W - L - R) / rates.length;
+  let g = '';
+  axisY(lo, hi, 10).forEach(v => { g += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="var(--line)"${v === 0 ? '' : ' stroke-dasharray="2 3"'}/><text x="${L - 4}" y="${y(v) + 3}" text-anchor="end">${v}</text>`; });
+  rates.forEach((r, i) => {
+    const x = L + i * bw, top = Math.min(y(r.p), y(0)), h = Math.max(1, Math.abs(y(r.p) - y(0)));
+    const isNow = r.s <= now && now < r.e, past = r.e <= now;
+    g += `<rect x="${x + 0.6}" y="${top}" width="${Math.max(1, bw - 1.2)}" height="${h}" fill="${band(r.p)}" opacity="${past ? 0.35 : 1}"${isNow ? ' stroke="var(--ink)" stroke-width="1.5"' : ''}><title>${fmtHM.format(r.s)} ${r.p.toFixed(2)}p</title></rect>`;
+    const hm = fmtHM.format(r.s);
+    if (hm.endsWith(':00') && +hm.slice(0, 2) % 3 === 0) g += `<text x="${x}" y="${H - 12}">${hm.slice(0, 2)}</text>`;
+    if (hm === '00:00') g += `<line x1="${x}" x2="${x}" y1="${T}" y2="${H - B}" stroke="var(--muted)"/><text x="${x + 3}" y="${H - 1}">${shortDate(dayKey(r.s))}</text>`;
+  });
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  svg.style.minWidth = Math.min(W, 640) + 'px';
+  svg.innerHTML = g;
+}
+
+/* ---------- bill ---------- */
+async function loadAccount() {
+  ACCOUNT = await getAll(`${API}/accounts/${S.account}/`, S.key);
+  const prop = (ACCOUNT.properties || []).find(p => !p.moved_out_at) || ACCOUNT.properties[0];
+  if (!prop) throw new Error('帳戶內搵唔到地址資料。');
+  ACCOUNT.elec = (prop.electricity_meter_points || []).find(m => !m.is_export);
+  ACCOUNT.gas = (prop.gas_meter_points || [])[0];
+  if (ACCOUNT.elec) {
+    const now = Date.now();
+    const a = ACCOUNT.elec.agreements.find(a => Date.parse(a.valid_from) <= now && (!a.valid_to || Date.parse(a.valid_to) > now));
+    if (a) tariffCode = a.tariff_code;
+  }
+}
+
+async function computeFuel(kind, point, c) {
+  const from = midnight(c.start), to = midnight(c.end);
+  const [cons, units, stand] = await Promise.all([
+    fetchConsumption(kind, point, from, to, S.key),
+    ratesForAgreements(kind, point.agreements, 'standard-unit-rates', from, to),
+    ratesForAgreements(kind, point.agreements, 'standing-charges', from, to)
+  ]);
+  const days = {};
+  let missing = 0, last = 0;
+  const toKwh = kind === 'gas' && S.gasUnit === 'm3' ? v => v * 1.02264 * (+S.cv || 39.9) / 3.6 : v => v;
+  for (const r of cons) {
+    const t = Date.parse(r.interval_start), k = dayKey(t);
+    const kwh = toKwh(r.consumption), rate = lookup(units, t);
+    if (rate == null) { missing++; continue; }
+    const d = days[k] || (days[k] = {kwh: 0, energy: 0, slots: []});
+    d.kwh += kwh; d.energy += kwh * rate;
+    if (kind === 'electricity') d.slots.push({t, kwh, rate});
+    last = Math.max(last, Date.parse(r.interval_end));
+  }
+  for (const k in days) {
+    const vat = kind === 'gas' ? +S.gasVat || 0 : elecVat(S, k);
+    const d = days[k];
+    d.stand = lookup(stand, midnight(k) + 12 * 3600e3) || 0;
+    d.vat = vat;
+    d.total = (d.energy + d.stand) * (1 + vat / 100) / 100; // £
+  }
+  return {days, missing, last};
+}
+
+async function loadBill() {
+  const today = dayKey(Date.now());
+  const c = cycleFor(today, S.startDay, shift);
+  $('cycleTitle').textContent = `帳單週期 ${shortDate(c.start)} – ${shortDate(addDays(c.end, -1))}`;
+  $('next').disabled = shift >= 0;
+  setStatus('載入讀數中…');
+  const [E, G] = await Promise.all([
+    ACCOUNT.elec ? computeFuel('electricity', ACCOUNT.elec, c) : null,
+    ACCOUNT.gas ? computeFuel('gas', ACCOUNT.gas, c) : null
+  ]);
+  const keys = [];
+  for (let k = c.start; k < c.end; k = addDays(k, 1)) keys.push(k);
+  const rows = keys.map(k => {
+    const e = E && E.days[k], g = G && G.days[k];
+    return {k, e, g, total: (e ? e.total : 0) + (g ? g.total : 0), has: !!(e || g)};
+  });
+  CYCLE = {c, rows, E, G};
+  renderBill();
+  const last = Math.max(E ? E.last : 0, G ? G.last : 0);
+  setStatus(last ? '數據更新至 ' + fmtStamp.format(last) : '本期未有數據');
+  const miss = (E ? E.missing : 0) + (G ? G.missing : 0);
+  showMsg(miss ? `有 ${miss} 個時段搵唔到對應電價，未計入。` : '');
+}
+
+function renderBill() {
+  const {c, rows, E} = CYCLE;
+  const done = rows.filter(r => r.has);
+  const sum = f => done.reduce((a, r) => a + f(r), 0);
+  const eTot = sum(r => r.e ? r.e.total : 0), gTot = sum(r => r.g ? r.g.total : 0), tot = eTot + gTot;
+  const eKwh = sum(r => r.e ? r.e.kwh : 0), gKwh = sum(r => r.g ? r.g.kwh : 0);
+  const eEnergy = sum(r => r.e ? r.e.energy : 0);
+  // load-shifting check: your weighted average vs plain average of the prices on offer
+  let plain = 0, n = 0;
+  done.forEach(r => r.e && r.e.slots.forEach(s => { plain += s.rate; n++; }));
+  const wavg = eKwh ? eEnergy / eKwh : 0, pavg = n ? plain / n : 0;
+  const recent = done.slice(-7), perDay = recent.length ? recent.reduce((a, r) => a + r.total, 0) / recent.length : 0;
+  const remaining = rows.length - done.length;
+  const proj = tot + perDay * remaining;
+  const diff = pavg ? (wavg - pavg) / pavg * 100 : 0;
+  $('billKpis').innerHTML = [
+    kpi('本期累計', gbp(tot), `${done.length} / ${rows.length} 日有數據`),
+    kpi('預計全期', remaining ? gbp(proj) : gbp(tot), remaining ? `按最近 ${recent.length} 日平均 ${gbp(perDay)}/日推算` : '本期已完結'),
+    kpi('電', gbp(eTot), `${eKwh.toFixed(1)} kWh`),
+    kpi('燃氣', gbp(gTot), `${gKwh.toFixed(1)} kWh`),
+    kpi('你嘅電均價', wavg ? wavg.toFixed(2) + 'p' : '—', pavg ? `同期 Agile 簡單平均 ${pavg.toFixed(2)}p（${diff <= 0 ? '平' : '貴'} ${Math.abs(diff).toFixed(0)}%）· 未計VAT` : '未計VAT')
+  ].join('');
+  drawDaily(rows);
+  $('dayRows').innerHTML = done.slice().reverse().map(r => {
+    const e = r.e, g = r.g;
+    return `<tr data-k="${r.k}"${r.k === selectedDay ? ' class="sel"' : ''}><td>${shortDate(r.k)}（${weekday(r.k)}）</td>
+      <td>${e ? e.kwh.toFixed(2) : '—'}</td><td>${e && e.kwh ? (e.energy / e.kwh).toFixed(2) : '—'}</td><td>${e ? e.total.toFixed(2) : '—'}</td>
+      <td>${g ? g.kwh.toFixed(1) : '—'}</td><td>${g ? g.total.toFixed(2) : '—'}</td><td><b>${r.total.toFixed(2)}</b></td></tr>`;
+  }).join('') || '<tr><td colspan="7">本期未有數據</td></tr>';
+  ['billPanel', 'tablePanel'].forEach(id => $(id).hidden = false);
+  const pick = (selectedDay && E && E.days[selectedDay]) ? selectedDay : (done.length ? done[done.length - 1].k : null);
+  if (pick) showDay(pick); else $('dayPanel').hidden = true;
+}
+
+function drawDaily(rows) {
+  const svg = $('dailyChart');
+  const W = 720, H = 200, L = 36, R = 8, T = 10, B = 24;
+  const max = Math.max(1, ...rows.map(r => r.total));
+  const hi = Math.ceil(max);
+  const y = v => T + (hi - v) / hi * (H - T - B);
+  const bw = (W - L - R) / rows.length;
+  let g = '';
+  const step = hi > 8 ? 2 : 1;
+  axisY(0, hi, step).forEach(v => { g += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="var(--line)"/><text x="${L - 4}" y="${y(v) + 3}" text-anchor="end">£${v}</text>`; });
+  rows.forEach((r, i) => {
+    const x = L + i * bw + 1.5, w = Math.max(2, bw - 3);
+    if (!r.has) { g += `<rect x="${x}" y="${H - B - 2}" width="${w}" height="2" fill="var(--line)"/>`; }
+    else {
+      const ev = r.e ? r.e.total : 0, gv = r.g ? r.g.total : 0;
+      g += `<g data-k="${r.k}" style="cursor:pointer"><title>${shortDate(r.k)} 電 £${ev.toFixed(2)} · 燃氣 £${gv.toFixed(2)}</title>
+        <rect x="${x}" y="${y(ev)}" width="${w}" height="${y(0) - y(ev)}" fill="var(--elec)"${r.k === selectedDay ? ' stroke="var(--ink)"' : ''}/>
+        <rect x="${x}" y="${y(ev + gv)}" width="${w}" height="${y(ev) - y(ev + gv)}" fill="var(--gas)"/></g>`;
+    }
+    if (i % Math.ceil(rows.length / 10) === 0) g += `<text x="${x}" y="${H - 8}">${shortDate(r.k)}</text>`;
+  });
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  svg.style.minWidth = '480px';
+  svg.innerHTML = g;
+}
+
+function showDay(k) {
+  selectedDay = k;
+  const e = CYCLE.E && CYCLE.E.days[k];
+  document.querySelectorAll('#dayRows tr').forEach(tr => tr.classList.toggle('sel', tr.dataset.k === k));
+  if (!e || !e.slots.length) { $('dayPanel').hidden = true; return; }
+  $('dayPanel').hidden = false;
+  const vatF = 1 + e.vat / 100;
+  $('dayTitle').textContent = `${shortDate(k)}（${weekday(k)}）半小時用電：${e.kwh.toFixed(2)} kWh · 電費 £${e.total.toFixed(2)} · 均價 ${(e.energy / e.kwh * vatF).toFixed(2)}p（含VAT）`;
+  const slots = e.slots.slice().sort((a, b) => a.t - b.t);
+  const svg = $('dayChart');
+  const W = 720, H = 220, L = 34, R = 36, T = 10, B = 24;
+  const kmax = Math.max(0.5, Math.ceil(Math.max(...slots.map(s => s.kwh)) * 2) / 2);
+  const ps = slots.map(s => s.rate * vatF);
+  const plo = Math.min(0, Math.floor(Math.min(...ps) / 10) * 10), phi = Math.max(10, Math.ceil(Math.max(...ps) / 10) * 10);
+  const yk = v => T + (kmax - v) / kmax * (H - T - B);
+  const yp = v => T + (phi - v) / (phi - plo) * (H - T - B);
+  const bw = (W - L - R) / slots.length;
+  let g = '';
+  axisY(plo, phi, 10).forEach(v => { g += `<line x1="${L}" x2="${W - R}" y1="${yp(v)}" y2="${yp(v)}" stroke="var(--line)" stroke-dasharray="2 3"/><text x="${W - R + 4}" y="${yp(v) + 3}">${v}p</text>`; });
+  axisY(0, kmax, kmax > 2 ? 1 : 0.5).forEach(v => { g += `<text x="${L - 4}" y="${yk(v) + 3}" text-anchor="end">${v}</text>`; });
+  slots.forEach((s, i) => {
+    const x = L + i * bw;
+    g += `<rect x="${x + 1}" y="${yk(s.kwh)}" width="${Math.max(1, bw - 2)}" height="${yk(0) - yk(s.kwh)}" fill="var(--elec)"><title>${fmtHM.format(s.t)} ${s.kwh.toFixed(2)} kWh @ ${(s.rate * vatF).toFixed(2)}p = ${(s.kwh * s.rate * vatF).toFixed(2)}p</title></rect>`;
+    const hm = fmtHM.format(s.t);
+    if (hm.endsWith(':00') && +hm.slice(0, 2) % 3 === 0) g += `<text x="${x}" y="${H - 8}">${hm}</text>`;
+  });
+  const pts = slots.map((s, i) => `${(L + (i + 0.5) * bw).toFixed(1)},${yp(s.rate * vatF).toFixed(1)}`).join(' ');
+  g += `<polyline points="${pts}" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round"/>`;
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  svg.style.minWidth = '480px';
+  svg.innerHTML = g;
+}
+
+/* ---------- wiring ---------- */
+async function run(withAccount) {
+  try {
+    showMsg('');
+    if (withAccount && S) {
+      setStatus('連接帳戶中…');
+      if (!ACCOUNT) await loadAccount();
+      await Promise.all([loadPrices(), loadBill()]);
+    } else {
+      setStatus('載入電價中…');
+      await loadPrices();
+      setStatus(S ? '' : '輸入 API key 睇埋你嘅帳單');
+    }
+  } catch (e) {
+    showMsg(e.message, true);
+    setStatus('出錯');
+  }
+}
+$('setup').addEventListener('submit', ev => {
+  ev.preventDefault();
+  S = readSettings();
+  if (!S.key || !S.account) { showMsg('請填 API key 同帳戶號碼。', true); return; }
+  ACCOUNT = null; shift = 0; selectedDay = null;
+  $('setupDetails').open = false;
+  run(true);
+});
+$('refresh').addEventListener('click', () => run(!!S));
+$('prev').addEventListener('click', () => { shift--; selectedDay = null; run(true); });
+$('next').addEventListener('click', () => { if (shift < 0) { shift++; selectedDay = null; run(true); } });
+$('dayRows').addEventListener('click', ev => { const tr = ev.target.closest('tr[data-k]'); if (tr) showDay(tr.dataset.k); });
+$('dailyChart').addEventListener('click', ev => { const g = ev.target.closest('g[data-k]'); if (g) { showDay(g.dataset.k); drawDaily(CYCLE.rows); } });
+
+if (loadSettings()) { S = readSettings(); $('setupDetails').open = false; run(true); }
+else run(false);
+setInterval(() => { if (S) loadPrices().catch(() => {}); }, 30 * 60e3);
+</script>
+</body>
+</html>
