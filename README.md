@@ -14,3 +14,14 @@
 ## 限制
 - 智能電錶數據一般遲大約一日先上到 API
 - 未計 Saving Sessions / Weekend Happy Hour 等 credit
+
+## 平電通知（ntfy）
+`.github/workflows/agile-notify.yml` 每日喺 Octopus 公佈明日電價後執行，計出低過門檻嘅時段，
+透過 [ntfy](https://ntfy.sh) 預先排定推送：即時一條明日總結，另外每段平電開始前幾分鐘再推一條。
+
+設定：
+1. 手機裝 ntfy app，訂閱一個難估嘅 topic 名（topic 名就等於密碼）
+2. Repo Settings → Secrets and variables → Actions → **Secrets** 加 `NTFY_TOPIC`
+3. （可選）**Variables**：`THRESHOLD`（p/kWh 含VAT，預設 10）、`LEAD_MIN`（提前幾多分鐘，預設 5）、
+   `VAT_PERCENT`（預設 0）、`TARIFF`（預設 `E-1R-AGILE-24-10-01-G`）
+4. Actions → Agile cheap-price notifications → Run workflow → `test`，測試收唔收到

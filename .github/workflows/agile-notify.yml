@@ -1,0 +1,69 @@
+name: Agile cheap-price notifications
+
+on:
+  schedule:
+    # Hourly 16:20–21:20 UTC; Octopus publishes tomorrow's prices around 16:00 UK time.
+    - cron: "20 16-21 * * *"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "run = schedule notifications, test = send one test push, dry-run = print only"
+        type: choice
+        options: [run, test, dry-run]
+        default: test
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agile-notify
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    env:
+      NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+      NTFY_SERVER: ${{ vars.NTFY_SERVER }}
+      THRESHOLD: ${{ vars.THRESHOLD }}
+      LEAD_MIN: ${{ vars.LEAD_MIN }}
+      VAT_PERCENT: ${{ vars.VAT_PERCENT }}
+      TARIFF: ${{ vars.TARIFF }}
+      APP_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Today's key
+        id: day
+        run: echo "key=agile-notified-$(TZ=Europe/London date +%F)" >> "$GITHUB_OUTPUT"
+
+      - name: Already sent today?
+        id: seen
+        if: github.event_name == 'schedule' || inputs.mode == 'run'
+        uses: actions/cache/restore@v4
+        with:
+          path: .notified
+          key: ${{ steps.day.outputs.key }}
+          lookup-only: true
+
+      - name: Send test notification
+        if: inputs.mode == 'test'
+        run: python3 notify/agile_notify.py --test
+
+      - name: Preview (dry run)
+        if: inputs.mode == 'dry-run'
+        run: python3 notify/agile_notify.py --dry-run
+
+      - name: Schedule notifications
+        id: run
+        if: (github.event_name == 'schedule' || inputs.mode == 'run') && steps.seen.outputs.cache-hit != 'true'
+        run: python3 notify/agile_notify.py
+
+      - name: Remember today's batch is sent
+        if: steps.run.outputs.sent == 'true'
+        run: echo done > .notified
+
+      - uses: actions/cache/save@v4
+        if: steps.run.outputs.sent == 'true'
+        with:
+          path: .notified
+          key: ${{ steps.day.outputs.key }}
