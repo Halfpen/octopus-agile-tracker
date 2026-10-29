@@ -102,7 +102,7 @@ small.fine{color:var(--muted);font-size:.78rem;display:block;margin-top:8px}
         <label>IOG 夜間價 p/kWh（23:30–05:30）<input id="iogNight" type="number" step="0.01" value="6.5"></label>
         <label>IOG 日間價 p/kWh<input id="iogDay" type="number" step="0.01" value="38.26"></label>
         <label>IOG standing charge p/日<input id="iogStand" type="number" step="0.01" value="45.12"></label>
-        <label>Tesla 充電判斷：每半小時 ≥ kWh（0 = 唔分）<input id="evKwh" type="number" step="0.1" value="0.9"></label>
+        <label>家用充電器功率 kW（8A 3-pin ≈ 1.84，0 = 唔分）<input id="chargerKw" type="number" step="0.01" value="1.84"></label>
         <label style="grid-column:1/-1;display:flex;gap:8px;align-items:center;color:var(--ink)"><input id="remember" type="checkbox" checked> 喺呢部機記住設定（API key 只存喺你自己瀏覽器）</label>
         <div class="row" style="grid-column:1/-1"><button class="primary" type="submit">儲存並載入帳單</button></div>
       </form>
@@ -177,7 +177,7 @@ const shortDate = key => { const [, m, d] = key.split('-'); return `${+d}/${+m}`
 const weekday = key => '日一二三四五六'[new Date(key + 'T12:00:00Z').getUTCDay()];
 
 /* ---------- settings ---------- */
-const FIELDS = ['key', 'account', 'startDay', 'gasUnit', 'cv', 'vatDate', 'vatBefore', 'vatAfter', 'gasVat', 'iogNight', 'iogDay', 'iogStand', 'evKwh'];
+const FIELDS = ['key', 'account', 'startDay', 'gasUnit', 'cv', 'vatDate', 'vatBefore', 'vatAfter', 'gasVat', 'iogNight', 'iogDay', 'iogStand', 'chargerKw'];
 function loadSettings() {
   try {
     const s = JSON.parse(localStorage.getItem('agileTracker') || 'null');
@@ -199,17 +199,18 @@ function readSettings() {
 const elecVat = (s, key) => +(key >= s.vatDate ? s.vatAfter : s.vatBefore) || 0;
 
 /* ---------- Intelligent Octopus Go comparison ---------- */
-const EV_BASE = 0.3; // household load left in a slot when the Tesla is charging (kWh)
-// One day's electricity priced on IOG (£, rates as entered incl. VAT). Tesla charging moves to the night rate;
+const MIN_HOUSE = 0.08; // smallest household load seen in a half hour (kWh)
+// One day's electricity priced on IOG (£, rates as entered incl. VAT). A slot drawing at least the charger's
+// half-hourly energy plus some house load counts as Tesla charging, which moves to the night rate;
 // 16:00–20:00 is cooking, never Tesla.
 function iogCost(e) {
-  const night = +S.iogNight || 0, day = +S.iogDay || 0, evMin = +S.evKwh || 0;
+  const night = +S.iogNight || 0, day = +S.iogDay || 0, evSlot = (+S.chargerKw || 0) / 2;
   let p = 0;
   for (const s of e.slots) {
     const hm = fmtHM.format(s.t);
     const offPeak = hm >= '23:30' || hm < '05:30';
     const cooking = hm >= '16:00' && hm < '20:00';
-    const ev = evMin > 0 && s.kwh >= evMin && !cooking ? s.kwh - EV_BASE : 0;
+    const ev = evSlot > 0 && s.kwh >= evSlot + 0.1 && !cooking ? Math.min(evSlot, s.kwh - MIN_HOUSE) : 0;
     p += ev * night + (s.kwh - ev) * (offPeak ? night : day);
   }
   return (p + (+S.iogStand || 0)) / 100;
