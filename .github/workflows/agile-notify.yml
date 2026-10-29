@@ -4,6 +4,8 @@ on:
   schedule:
     # Hourly 16:20–21:20 UTC; Octopus publishes tomorrow's prices around 16:00 UK time.
     - cron: "20 16-21 * * *"
+    # Keepalive: GitHub disables schedules after 60 days without repo activity.
+    - cron: "17 3 1,15 * *"
   workflow_dispatch:
     inputs:
       mode:
@@ -19,7 +21,19 @@ concurrency:
   group: agile-notify
 
 jobs:
+  keepalive:
+    if: github.event.schedule == '17 3 1,15 * *'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Re-enable this workflow to reset the 60-day timer
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/agile-notify.yml/enable"
+
   notify:
+    if: github.event.schedule != '17 3 1,15 * *'
     runs-on: ubuntu-latest
     env:
       NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
