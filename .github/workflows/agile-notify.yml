@@ -42,6 +42,8 @@ jobs:
       LEAD_MIN: ${{ vars.LEAD_MIN }}
       VAT_PERCENT: ${{ vars.VAT_PERCENT }}
       TARIFF: ${{ vars.TARIFF }}
+      CHARGE_HOURS: ${{ vars.CHARGE_HOURS }}
+      SUPERCHARGER_P: ${{ vars.SUPERCHARGER_P }}
       APP_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
     steps:
       - uses: actions/checkout@v4

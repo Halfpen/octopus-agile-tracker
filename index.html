@@ -99,6 +99,10 @@ small.fine{color:var(--muted);font-size:.78rem;display:block;margin-top:8px}
         <label>電 VAT 改變前 %<input id="vatBefore" type="number" step="0.1" value="5"></label>
         <label>電 VAT 改變後 %<input id="vatAfter" type="number" step="0.1" value="0"></label>
         <label>燃氣 VAT %<input id="gasVat" type="number" step="0.1" value="5"></label>
+        <label>IOG 夜間價 p/kWh（23:30–05:30）<input id="iogNight" type="number" step="0.01" value="6.5"></label>
+        <label>IOG 日間價 p/kWh<input id="iogDay" type="number" step="0.01" value="38.26"></label>
+        <label>IOG standing charge p/日<input id="iogStand" type="number" step="0.01" value="45.12"></label>
+        <label>Tesla 充電判斷：每半小時 ≥ kWh（0 = 唔分）<input id="evKwh" type="number" step="0.1" value="0.9"></label>
         <label style="grid-column:1/-1;display:flex;gap:8px;align-items:center;color:var(--ink)"><input id="remember" type="checkbox" checked> 喺呢部機記住設定（API key 只存喺你自己瀏覽器）</label>
         <div class="row" style="grid-column:1/-1"><button class="primary" type="submit">儲存並載入帳單</button></div>
       </form>
@@ -127,10 +131,10 @@ small.fine{color:var(--muted);font-size:.78rem;display:block;margin-top:8px}
   <section class="panel" id="tablePanel" hidden>
     <h2>每日明細（撳一行睇半小時用電）</h2>
     <div class="scroll"><table>
-      <thead><tr><th>日期</th><th>電 kWh</th><th>電均價 p</th><th>電 £</th><th>燃氣 kWh</th><th>燃氣 £</th><th>合計 £</th></tr></thead>
+      <thead><tr><th>日期</th><th>電 kWh</th><th>電均價 p</th><th>電 £</th><th>IOG £</th><th>燃氣 kWh</th><th>燃氣 £</th><th>合計 £</th></tr></thead>
       <tbody id="dayRows"></tbody>
     </table></div>
-    <small class="fine">金額已包括 standing charge 同 VAT，未計 Saving Sessions / Weekend Happy Hour 等 credit。智能電錶數據一般遲大約一日先上到 API。</small>
+    <small class="fine">金額已包括 standing charge 同 VAT，未計 Saving Sessions / Weekend Happy Hour 等 credit。IOG 一欄用同一批半小時讀數，按設定入面嘅 IOG 價錢重計，並假設 Tesla 充電全部改喺夜間價時段；超充開支冇計入。智能電錶數據一般遲大約一日先上到 API。</small>
   </section>
 </div>
 
@@ -173,7 +177,7 @@ const shortDate = key => { const [, m, d] = key.split('-'); return `${+d}/${+m}`
 const weekday = key => '日一二三四五六'[new Date(key + 'T12:00:00Z').getUTCDay()];
 
 /* ---------- settings ---------- */
-const FIELDS = ['key', 'account', 'startDay', 'gasUnit', 'cv', 'vatDate', 'vatBefore', 'vatAfter', 'gasVat'];
+const FIELDS = ['key', 'account', 'startDay', 'gasUnit', 'cv', 'vatDate', 'vatBefore', 'vatAfter', 'gasVat', 'iogNight', 'iogDay', 'iogStand', 'evKwh'];
 function loadSettings() {
   try {
     const s = JSON.parse(localStorage.getItem('agileTracker') || 'null');
@@ -193,6 +197,23 @@ function readSettings() {
   return s;
 }
 const elecVat = (s, key) => +(key >= s.vatDate ? s.vatAfter : s.vatBefore) || 0;
+
+/* ---------- Intelligent Octopus Go comparison ---------- */
+const EV_BASE = 0.3; // household load left in a slot when the Tesla is charging (kWh)
+// One day's electricity priced on IOG (£, rates as entered incl. VAT). Tesla charging moves to the night rate;
+// 16:00–20:00 is cooking, never Tesla.
+function iogCost(e) {
+  const night = +S.iogNight || 0, day = +S.iogDay || 0, evMin = +S.evKwh || 0;
+  let p = 0;
+  for (const s of e.slots) {
+    const hm = fmtHM.format(s.t);
+    const offPeak = hm >= '23:30' || hm < '05:30';
+    const cooking = hm >= '16:00' && hm < '20:00';
+    const ev = evMin > 0 && s.kwh >= evMin && !cooking ? s.kwh - EV_BASE : 0;
+    p += ev * night + (s.kwh - ev) * (offPeak ? night : day);
+  }
+  return (p + (+S.iogStand || 0)) / 100;
+}
 
 /* ---------- API ---------- */
 async function getAll(url, key) {
@@ -356,6 +377,7 @@ async function computeFuel(kind, point, c) {
     d.stand = lookup(stand, midnight(k) + 12 * 3600e3) || 0;
     d.vat = vat;
     d.total = (d.energy + d.stand) * (1 + vat / 100) / 100; // £
+    if (kind === 'electricity') d.iog = iogCost(d);
   }
   return {days, missing, last};
 }
@@ -396,6 +418,7 @@ function renderBill() {
   done.forEach(r => r.e && r.e.slots.forEach(s => { plain += s.rate; n++; }));
   const wavg = eKwh ? eEnergy / eKwh : 0, pavg = n ? plain / n : 0;
   const recent = done.slice(-7), perDay = recent.length ? recent.reduce((a, r) => a + r.total, 0) / recent.length : 0;
+  const iogTot = sum(r => r.e ? r.e.iog : 0), iogDiff = iogTot - eTot;
   const remaining = rows.length - done.length;
   const proj = tot + perDay * remaining;
   const diff = pavg ? (wavg - pavg) / pavg * 100 : 0;
@@ -404,15 +427,16 @@ function renderBill() {
     kpi('預計全期', remaining ? gbp(proj) : gbp(tot), remaining ? `按最近 ${recent.length} 日平均 ${gbp(perDay)}/日推算` : '本期已完結'),
     kpi('電', gbp(eTot), `${eKwh.toFixed(1)} kWh`),
     kpi('燃氣', gbp(gTot), `${gKwh.toFixed(1)} kWh`),
+    kpi('如果用 IOG', eTot ? gbp(iogTot) : '—', eTot ? `電費比 Agile ${iogDiff > 0 ? '貴' : '平'} ${gbp(Math.abs(iogDiff))}（${iogDiff > 0 ? '留 Agile' : 'IOG 著數'}）` : ''),
     kpi('你嘅電均價', wavg ? wavg.toFixed(2) + 'p' : '—', pavg ? `同期 Agile 簡單平均 ${pavg.toFixed(2)}p（${diff <= 0 ? '平' : '貴'} ${Math.abs(diff).toFixed(0)}%）· 未計VAT` : '未計VAT')
   ].join('');
   drawDaily(rows);
   $('dayRows').innerHTML = done.slice().reverse().map(r => {
     const e = r.e, g = r.g;
     return `<tr data-k="${r.k}"${r.k === selectedDay ? ' class="sel"' : ''}><td>${shortDate(r.k)}（${weekday(r.k)}）</td>
-      <td>${e ? e.kwh.toFixed(2) : '—'}</td><td>${e && e.kwh ? (e.energy / e.kwh).toFixed(2) : '—'}</td><td>${e ? e.total.toFixed(2) : '—'}</td>
+      <td>${e ? e.kwh.toFixed(2) : '—'}</td><td>${e && e.kwh ? (e.energy / e.kwh).toFixed(2) : '—'}</td><td>${e ? e.total.toFixed(2) : '—'}</td><td>${e ? e.iog.toFixed(2) : '—'}</td>
       <td>${g ? g.kwh.toFixed(1) : '—'}</td><td>${g ? g.total.toFixed(2) : '—'}</td><td><b>${r.total.toFixed(2)}</b></td></tr>`;
-  }).join('') || '<tr><td colspan="7">本期未有數據</td></tr>';
+  }).join('') || '<tr><td colspan="8">本期未有數據</td></tr>';
   ['billPanel', 'tablePanel'].forEach(id => $(id).hidden = false);
   const pick = (selectedDay && E && E.days[selectedDay]) ? selectedDay : (done.length ? done[done.length - 1].k : null);
   if (pick) showDay(pick); else $('dayPanel').hidden = true;

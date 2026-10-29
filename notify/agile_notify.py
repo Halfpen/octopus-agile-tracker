@@ -12,6 +12,8 @@ Environment:
   VAT_PERCENT  electricity VAT applied to value_exc_vat (default 0)
   TARIFF       default E-1R-AGILE-24-10-01-G (North West)
   APP_URL      link opened when a notification is tapped
+  CHARGE_HOURS length of the Tesla charging block to look for (default 4)
+  SUPERCHARGER_P  local Supercharger price, p/kWh incl. VAT, to compare against (default 25)
 """
 import json
 import os
@@ -75,6 +77,19 @@ def cheap_windows(slots, threshold):
     return windows
 
 
+def cheapest_block(slots, n):
+    """Cheapest run of n consecutive slots, as a list, or None."""
+    best, best_avg = None, None
+    for i in range(len(slots) - n + 1):
+        block = slots[i:i + n]
+        if any(block[j]["start"] != block[j - 1]["end"] for j in range(1, n)):
+            continue
+        avg = sum(s["p"] for s in block) / n
+        if best_avg is None or avg < best_avg:
+            best, best_avg = block, avg
+    return best
+
+
 def hm(dt):
     return dt.astimezone(LONDON).strftime("%H:%M")
 
@@ -91,8 +106,9 @@ def describe(window):
             f"平均 {avg:.2f}p，最低 {min(prices):.2f}p")
 
 
-def build_messages(batch, threshold, lead_min, now):
+def build_messages(batch, threshold, lead_min, now, charge_hours=4, supercharger_p=25):
     windows = cheap_windows(batch, threshold)
+    block = cheapest_block(batch, int(charge_hours * 2))
     cheapest = min(batch, key=lambda s: s["p"])
     negative = sum(1 for s in batch if s["p"] < 0)
     lines = [f"最平：{hm(cheapest['start'])} {cheapest['p']:.2f}p"]
@@ -103,11 +119,28 @@ def build_messages(batch, threshold, lead_min, now):
         lines += [f"• {span}  {stats}" for span, stats in map(describe, windows)]
     else:
         lines.append(f"冇時段低於 {threshold:g}p")
+    if block:
+        block_avg = sum(s["p"] for s in block) / len(block)
+        span = f"{hm(block[0]['start'])}–{hm(block[-1]['end'])}"
+        lines.append(f"最平連續 {charge_hours:g} 小時充電：{span} 平均 {block_avg:.2f}p")
+        if not windows:
+            gap = supercharger_p - block_avg
+            lines.append(f"超充站大約 {supercharger_p:g}p → "
+                         + (f"喺屋企充平 {gap:.1f}p/kWh" if gap >= 0 else f"去超充平 {-gap:.1f}p/kWh"))
     messages = [{
-        "title": f"{day_label(batch[-1]['start'])} Agile 電價已公佈",
+        "title": f"{day_label(batch[-1]['start'])} " + ("Agile 電價已公佈" if windows else "冇平電"),
         "message": "\n".join(lines),
-        "tags": ["zap"],
+        "tags": ["zap"] if windows else ["warning"],
     }]
+    # No cheap window: remind at the start of the best charging block instead.
+    if block and not windows and block_avg < supercharger_p:
+        at = block[0]["start"] - timedelta(minutes=lead_min)
+        msg = {"title": f"Tesla 充電時段開始：{span}",
+               "message": f"平均 {block_avg:.2f}p（超充大約 {supercharger_p:g}p）",
+               "tags": ["electric_plug"]}
+        if at > now + timedelta(seconds=30):
+            msg["delay"] = str(int(at.timestamp()))
+        messages.append(msg)
     for w in windows:
         span, stats = describe(w)
         at = w[0]["start"] - timedelta(minutes=lead_min)
@@ -160,7 +193,9 @@ def main():
         print("Tomorrow's prices are not published yet.")
         return
 
-    for msg in build_messages(batch, threshold, lead_min, now):
+    charge_hours = float(env("CHARGE_HOURS", "4"))
+    supercharger_p = float(env("SUPERCHARGER_P", "25"))
+    for msg in build_messages(batch, threshold, lead_min, now, charge_hours, supercharger_p):
         when = datetime.fromtimestamp(int(msg["delay"]), LONDON).strftime("%d/%m %H:%M") if "delay" in msg else "now"
         print(f"[{when}] {msg['title']} | {msg['message']}")
         if not dry_run:

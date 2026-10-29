@@ -23,5 +23,6 @@
 1. 手機裝 ntfy app，訂閱一個難估嘅 topic 名（topic 名就等於密碼）
 2. Repo Settings → Secrets and variables → Actions → **Secrets** 加 `NTFY_TOPIC`
 3. （可選）**Variables**：`THRESHOLD`（p/kWh 含VAT，預設 10）、`LEAD_MIN`（提前幾多分鐘，預設 5）、
-   `VAT_PERCENT`（預設 0）、`TARIFF`（預設 `E-1R-AGILE-24-10-01-G`）
+   `VAT_PERCENT`（預設 0）、`TARIFF`（預設 `E-1R-AGILE-24-10-01-G`）、
+   `CHARGE_HOURS`（Tesla 充電要幾多個鐘，預設 4）、`SUPERCHARGER_P`（附近超充站每 kWh 價錢，預設 25）
 4. Actions → Agile cheap-price notifications → Run workflow → `test`，測試收唔收到
