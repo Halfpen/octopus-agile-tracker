@@ -17,7 +17,7 @@ jobs:
       - name: Download rates
         run: |
           mkdir -p data
-          python3 notify/gas_tracker_history.py 2025-10-01 data/gas-tracker-vs-flexible-G.csv G
+          python3 notify/gas_tracker_history.py 2025-10-01 data/gas-tracker-vs-flexible-G.csv G  # probes Tracker codes
       - name: Commit CSV
         run: |
           git config user.name "github-actions[bot]"
