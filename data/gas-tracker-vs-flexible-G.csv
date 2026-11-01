@@ -1,0 +1,21 @@
+product,name,kind,valid_from,valid_to,value_exc_vat,value_inc_vat
+VAR-22-11-01,Flexible Octopus,standard-unit-rates,2026-09-30T23:00:00Z,,7.4883,7.862715
+VAR-22-11-01,Flexible Octopus,standard-unit-rates,2026-09-30T23:00:00Z,,7.8906,8.28513
+VAR-22-11-01,Flexible Octopus,standard-unit-rates,2026-06-30T23:00:00Z,2026-09-30T23:00:00Z,6.8921,7.236705
+VAR-22-11-01,Flexible Octopus,standard-unit-rates,2026-06-30T23:00:00Z,2026-09-30T23:00:00Z,7.2577,7.620585
+VAR-22-11-01,Flexible Octopus,standard-unit-rates,2026-03-31T23:00:00Z,2026-06-30T23:00:00Z,5.6678,5.95119
+VAR-22-11-01,Flexible Octopus,standard-unit-rates,2026-03-31T23:00:00Z,2026-06-30T23:00:00Z,5.3819,5.650995
+VAR-22-11-01,Flexible Octopus,standard-unit-rates,2026-01-01T00:00:00Z,2026-03-31T23:00:00Z,5.8129,6.103545
+VAR-22-11-01,Flexible Octopus,standard-unit-rates,2026-01-01T00:00:00Z,2026-03-31T23:00:00Z,5.6141,5.894805
+VAR-22-11-01,Flexible Octopus,standard-unit-rates,2025-09-30T23:00:00Z,2026-01-01T00:00:00Z,5.9516,6.24918
+VAR-22-11-01,Flexible Octopus,standard-unit-rates,2025-09-30T23:00:00Z,2026-01-01T00:00:00Z,6.1421,6.449205
+VAR-22-11-01,Flexible Octopus,standing-charges,2026-09-30T23:00:00Z,,27.4785,28.852425
+VAR-22-11-01,Flexible Octopus,standing-charges,2026-09-30T23:00:00Z,,31.2793,32.843265
+VAR-22-11-01,Flexible Octopus,standing-charges,2026-06-30T23:00:00Z,2026-09-30T23:00:00Z,27.6476,29.02998
+VAR-22-11-01,Flexible Octopus,standing-charges,2026-06-30T23:00:00Z,2026-09-30T23:00:00Z,31.6891,33.273555
+VAR-22-11-01,Flexible Octopus,standing-charges,2026-03-31T23:00:00Z,2026-06-30T23:00:00Z,34.8421,36.584205
+VAR-22-11-01,Flexible Octopus,standing-charges,2026-03-31T23:00:00Z,2026-06-30T23:00:00Z,27.6997,29.084685
+VAR-22-11-01,Flexible Octopus,standing-charges,2026-01-01T00:00:00Z,2026-03-31T23:00:00Z,32.2688,33.88224
+VAR-22-11-01,Flexible Octopus,standing-charges,2026-01-01T00:00:00Z,2026-03-31T23:00:00Z,38.531,40.45755
+VAR-22-11-01,Flexible Octopus,standing-charges,2025-09-30T23:00:00Z,2026-01-01T00:00:00Z,31.6347,33.216435
+VAR-22-11-01,Flexible Octopus,standing-charges,2025-09-30T23:00:00Z,2026-01-01T00:00:00Z,37.6347,39.516435
