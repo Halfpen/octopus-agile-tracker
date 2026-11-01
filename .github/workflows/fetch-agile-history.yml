@@ -17,7 +17,7 @@ jobs:
       - name: Download rates
         run: |
           mkdir -p data
-          python3 notify/fetch_history.py 2025-10-01 2026-04-19 data/agile-G-2025-10-01_2026-04-18.csv
+          python3 notify/agile_monthly_stats.py data/agile-G-monthly-stats.csv G
       - name: Commit CSV
         run: |
           git config user.name "github-actions[bot]"
