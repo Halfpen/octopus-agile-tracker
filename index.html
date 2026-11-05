@@ -264,8 +264,15 @@ async function glow(path) {
 async function brightElectricity(from, to) {
   if (!BRIGHT_RES) {
     const ves = await glow('/virtualentity');
-    const res = ves.flatMap(v => v.resources || []).find(r => r.classifier === 'electricity.consumption');
-    if (!res) throw new Error('Bright 帳戶入面搵唔到電錶讀數。');
+    const all = (Array.isArray(ves) ? ves : []).flatMap(v => v.resources || []);
+    const res = all.find(r => r.classifier === 'electricity.consumption') ||
+      all.find(r => /^electricity\.consumption/.test(r.classifier || '') && !/cost/.test(r.classifier));
+    if (!res) {
+      const found = all.map(r => r.classifier || r.name).filter(Boolean);
+      throw new Error(found.length
+        ? `Bright 戶口有讀數資料，但搵唔到電錶用電：${found.join('、')}`
+        : `Bright 戶口暫時未有電錶資料（${Array.isArray(ves) ? ves.length : 0} 個裝置）。新開戶通常要等一至幾日先連接到電錶。`);
+    }
     BRIGHT_RES = res.resourceId;
     glow(`/resource/${BRIGHT_RES}/catchup`).catch(() => {}); // ask Glowmarkt to pull the latest readings from the meter
   }
