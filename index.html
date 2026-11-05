@@ -264,11 +264,19 @@ async function glow(path) {
 async function brightElectricity(from, to) {
   if (!BRIGHT_RES) {
     const ves = await glow('/virtualentity');
-    const all = (Array.isArray(ves) ? ves : []).flatMap(v => v.resources || []);
-    const res = all.find(r => r.classifier === 'electricity.consumption') ||
+    const list = Array.isArray(ves) ? ves : [];
+    let all = list.flatMap(v => v.resources || []);
+    // the entity list may leave out each resource's classifier; the per-entity listing has it
+    if (!all.some(r => r.classifier)) {
+      const detail = await Promise.all(list.map(v => glow(`/virtualentity/${v.veId}/resources`).catch(() => null)));
+      all = detail.flatMap(d => (d && d.resources) || []);
+    }
+    const isElec = r => r.classifier === 'electricity.consumption' ||
+      (!r.classifier && /electricity/i.test(r.name || '') && /consumption/i.test(r.name || '') && !/cost/i.test(r.name || ''));
+    const res = all.find(isElec) ||
       all.find(r => /^electricity\.consumption/.test(r.classifier || '') && !/cost/.test(r.classifier));
     if (!res) {
-      const found = all.map(r => r.classifier || r.name).filter(Boolean);
+      const found = all.map(r => [r.classifier, r.name].filter(Boolean).join(' / ')).filter(Boolean);
       throw new Error(found.length
         ? `Bright 戶口有讀數資料，但搵唔到電錶用電：${found.join('、')}`
         : `Bright 戶口暫時未有電錶資料（${Array.isArray(ves) ? ves.length : 0} 個裝置）。新開戶通常要等一至幾日先連接到電錶。`);
