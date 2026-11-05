@@ -17,12 +17,7 @@ jobs:
       - name: Download rates
         run: |
           mkdir -p data
-          # CORS check for the Glowmarkt (Bright) API, no credentials involved
-          curl -s -o /dev/null -D - -X OPTIONS https://api.glowmarkt.com/api/v0-1/auth \
-            -H "Origin: https://halfpen.github.io" -H "Access-Control-Request-Method: POST" \
-            -H "Access-Control-Request-Headers: content-type,applicationid,token" | grep -i -E "^HTTP|access-control" || true
-          curl -s -o /dev/null -D - https://api.glowmarkt.com/api/v0-1/virtualentity \
-            -H "Origin: https://halfpen.github.io" | grep -i -E "^HTTP|access-control" || true
+          python3 notify/fixed_gas_offers.py data/octopus-fixed-offers-G.csv G
       - name: Commit CSV
         run: |
           git config user.name "github-actions[bot]"

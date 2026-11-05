@@ -103,6 +103,12 @@ small.fine{color:var(--muted);font-size:.78rem;display:block;margin-top:8px}
         <label>IOG 日間價 p/kWh<input id="iogDay" type="number" step="0.01" value="38.26"></label>
         <label>IOG standing charge p/日<input id="iogStand" type="number" step="0.01" value="45.12"></label>
         <label>家用充電器最高功率 kW（3-pin 8A ≈ 1.84、10A ≈ 2.3，0 = 唔分）<input id="chargerKw" type="number" step="0.01" value="2.3"></label>
+        <label>Bright 帳號（電郵）<input id="brightUser" type="email" autocomplete="username" placeholder="用 Bright app 攞電錶讀數"></label>
+        <label>Bright 密碼（只用嚟登入，唔會儲存）<input id="brightPass" type="password" autocomplete="current-password"></label>
+        <label>EDF 開始供電日期<input id="edfStart" type="date" value="2026-11-05"></label>
+        <label>EDF 日間價 p/kWh（06:00–23:00）<input id="edfDay" type="number" step="0.001" value="37.24"></label>
+        <label>EDF 夜間價 p/kWh（23:00–06:00）<input id="edfNight" type="number" step="0.001" value="6.66"></label>
+        <label>EDF standing charge p/日<input id="edfStand" type="number" step="0.001" value="45.68"></label>
         <label style="grid-column:1/-1;display:flex;gap:8px;align-items:center;color:var(--ink)"><input id="remember" type="checkbox" checked> 喺呢部機記住設定（API key 只存喺你自己瀏覽器）</label>
         <div class="row" style="grid-column:1/-1"><button class="primary" type="submit">儲存並載入帳單</button></div>
       </form>
@@ -131,10 +137,10 @@ small.fine{color:var(--muted);font-size:.78rem;display:block;margin-top:8px}
   <section class="panel" id="tablePanel" hidden>
     <h2>每日明細（撳一行睇半小時用電）</h2>
     <div class="scroll"><table>
-      <thead><tr><th>日期</th><th>電 kWh</th><th>電均價 p</th><th>電 £</th><th>IOG £</th><th>燃氣 kWh</th><th>燃氣 £</th><th>合計 £</th></tr></thead>
+      <thead><tr><th>日期</th><th>電 kWh</th><th>電均價 p</th><th>電 £</th><th>IOG £</th><th>Agile £</th><th>燃氣 kWh</th><th>燃氣 £</th><th>合計 £</th></tr></thead>
       <tbody id="dayRows"></tbody>
     </table></div>
-    <small class="fine">金額已包括 standing charge 同 VAT，未計 Saving Sessions / Weekend Happy Hour 等 credit。IOG 一欄用同一批半小時讀數，按設定入面嘅 IOG 價錢重計，並假設 Tesla 充電全部改喺夜間價時段；超充開支冇計入。智能電錶數據一般遲大約一日先上到 API。</small>
+    <small class="fine">金額已包括 standing charge 同 VAT，未計 Saving Sessions / Weekend Happy Hour 等 credit。IOG 一欄用同一批半小時讀數，按設定入面嘅 IOG 價錢重計，並假設 Tesla 充電全部改喺夜間價時段；超充開支冇計入。EDF 期間嘅電錶讀數嚟自 Bright（Glowmarkt），按設定入面嘅 EDF 價錢計；Agile 一欄係同一批讀數按當日 Agile 電價重計，用嚟比較。EDF Smart Charging 額外嘅平價時段冇計入。智能電錶數據一般遲大約一日先上到 API。</small>
   </section>
 </div>
 
@@ -177,7 +183,7 @@ const shortDate = key => { const [, m, d] = key.split('-'); return `${+d}/${+m}`
 const weekday = key => '日一二三四五六'[new Date(key + 'T12:00:00Z').getUTCDay()];
 
 /* ---------- settings ---------- */
-const FIELDS = ['key', 'account', 'startDay', 'gasUnit', 'cv', 'vatDate', 'vatBefore', 'vatAfter', 'gasVat', 'iogNight', 'iogDay', 'iogStand', 'chargerKw'];
+const FIELDS = ['key', 'account', 'startDay', 'gasUnit', 'cv', 'vatDate', 'vatBefore', 'vatAfter', 'gasVat', 'iogNight', 'iogDay', 'iogStand', 'chargerKw', 'brightUser', 'edfStart', 'edfDay', 'edfNight', 'edfStand'];
 function loadSettings() {
   try {
     const s = JSON.parse(localStorage.getItem('agileTracker') || 'null');
@@ -188,6 +194,7 @@ function loadSettings() {
 function readSettings() {
   const s = {};
   FIELDS.forEach(f => s[f] = $(f).value.trim());
+  s.brightUser = s.brightUser.toLowerCase();
   s.startDay = Math.min(28, Math.max(1, parseInt(s.startDay) || 1));
   s.account = s.account.toUpperCase();
   try {
@@ -215,6 +222,95 @@ function iogCost(e) {
     p += ev * night + (s.kwh - ev) * (offPeak ? night : day);
   }
   return (p + (+S.iogStand || 0)) / 100;
+}
+
+/* ---------- Bright (Glowmarkt) meter readings for the EDF period ---------- */
+const GLOW = 'https://api.glowmarkt.com/api/v0-1';
+const GLOW_APP = 'b0f1b774-a586-4f72-9edd-27ead8aa7a8d'; // the Bright app's public application id
+const AGILE_STAND = 47.60; // Agile standing charge p/day on the last Octopus bill
+let BRIGHT = null, BRIGHT_RES = null;
+
+async function brightToken() {
+  let saved = BRIGHT;
+  try { saved = saved || JSON.parse(localStorage.getItem('agileTrackerBright') || 'null'); } catch {}
+  if (saved && saved.user === S.brightUser && saved.exp * 1000 > Date.now() + 3600e3) return (BRIGHT = saved).token;
+  const pass = $('brightPass').value;
+  if (!pass) throw new Error('請喺設定輸入 Bright 密碼登入（登入每幾日要重新做一次）。');
+  let r;
+  try {
+    r = await fetch(`${GLOW}/auth`, {method: 'POST', headers: {'Content-Type': 'application/json', applicationId: GLOW_APP},
+      body: JSON.stringify({username: S.brightUser, password: pass})});
+  } catch { throw new Error('連唔到 Bright（Glowmarkt）API。'); }
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || !j.valid) throw new Error('Bright 帳號或密碼唔正確。');
+  BRIGHT = {user: S.brightUser, token: j.token, exp: j.exp};
+  $('brightPass').value = '';
+  try { if ($('remember').checked) localStorage.setItem('agileTrackerBright', JSON.stringify(BRIGHT)); } catch {}
+  return BRIGHT.token;
+}
+async function glow(path) {
+  const token = await brightToken();
+  let r;
+  try { r = await fetch(GLOW + path, {headers: {applicationId: GLOW_APP, token}}); }
+  catch { throw new Error('連唔到 Bright（Glowmarkt）API。'); }
+  if (r.status === 401) {
+    BRIGHT = null;
+    try { localStorage.removeItem('agileTrackerBright'); } catch {}
+    throw new Error('Bright 登入已過期，請喺設定重新輸入密碼。');
+  }
+  if (!r.ok) throw new Error('Bright API 回覆錯誤 ' + r.status);
+  return r.json();
+}
+async function brightElectricity(from, to) {
+  if (!BRIGHT_RES) {
+    const ves = await glow('/virtualentity');
+    const res = ves.flatMap(v => v.resources || []).find(r => r.classifier === 'electricity.consumption');
+    if (!res) throw new Error('Bright 帳戶入面搵唔到電錶讀數。');
+    BRIGHT_RES = res.resourceId;
+    glow(`/resource/${BRIGHT_RES}/catchup`).catch(() => {}); // ask Glowmarkt to pull the latest readings from the meter
+  }
+  const iso = ms => new Date(ms).toISOString().slice(0, 19);
+  const byTime = new Map();
+  for (let a = from; a < to; a += 10 * DAY) { // half-hourly readings are limited to 10 days per request
+    const b = Math.min(to, a + 10 * DAY);
+    const j = await glow(`/resource/${BRIGHT_RES}/readings?from=${iso(a)}&to=${iso(b - 1000)}&period=PT30M&offset=0&function=sum`);
+    for (const [ts, v] of j.data || []) if (ts * 1000 >= from && ts * 1000 < to) byTime.set(ts * 1000, +v || 0);
+  }
+  const out = [...byTime].sort((x, y) => x[0] - y[0]).map(([t, kwh]) => ({t, kwh}));
+  // Glowmarkt fills slots it has no reading for yet with 0, so drop the trailing run of them
+  while (out.length && out[out.length - 1].kwh === 0) out.pop();
+  return out;
+}
+
+// EDF Go Electric days from Bright readings, plus the same usage priced on Agile for comparison
+async function computeEdf(c, from) {
+  const to = midnight(c.end);
+  const agileTariff = tariffCode.includes('AGILE') ? tariffCode : `E-1R-${DEFAULT_PRODUCT}-${DEFAULT_REGION}`;
+  const [slots, agile] = await Promise.all([
+    brightElectricity(from, to),
+    fetchRates('electricity', agileTariff, 'standard-unit-rates', from, to).catch(() => [])
+  ]);
+  const day = +S.edfDay || 0, night = +S.edfNight || 0, stand = +S.edfStand || 0;
+  const days = {};
+  let last = 0;
+  for (const s of slots) {
+    const k = dayKey(s.t), hm = fmtHM.format(s.t);
+    const rate = hm >= '23:00' || hm < '06:00' ? night : day; // Go Electric off-peak is 23:00–06:00
+    const a = lookup(agile, s.t);
+    const d = days[k] || (days[k] = {kwh: 0, energy: 0, agileEnergy: 0, agileSlots: 0, slots: []});
+    d.kwh += s.kwh; d.energy += s.kwh * rate;
+    if (a != null) { d.agileEnergy += s.kwh * a * (1 + elecVat(S, k) / 100); d.agileSlots++; }
+    d.slots.push({t: s.t, kwh: s.kwh, rate, agile: a});
+    last = Math.max(last, s.t + 30 * 60e3);
+  }
+  for (const k in days) {
+    const d = days[k];
+    d.stand = stand; d.vat = 0; // EDF prices are entered as charged
+    d.total = (d.energy + d.stand) / 100;
+    d.iog = iogCost(d);
+    d.agile = d.agileSlots ? (d.agileEnergy + AGILE_STAND * (1 + elecVat(S, k) / 100)) / 100 : null;
+  }
+  return {days, missing: 0, last};
 }
 
 /* ---------- API ---------- */
@@ -395,10 +491,16 @@ async function loadBill() {
   $('cycleTitle').textContent = `帳單週期 ${shortDate(c.start)} – ${shortDate(addDays(c.end, -1))}`;
   $('next').disabled = shift >= 0;
   setStatus('載入讀數中…');
-  const [E, G] = await Promise.all([
-    ACCOUNT.elec && midnight(c.start) < ACCOUNT.elecEnd ? computeFuel('electricity', ACCOUNT.elec, c, ACCOUNT.elecEnd) : null,
+  let brightErr = '';
+  const edfFrom = S.brightUser && S.edfStart ? midnight(S.edfStart) : Infinity;
+  const octEnd = Math.min(ACCOUNT.elecEnd ?? Infinity, edfFrom);
+  const [O, B, G] = await Promise.all([
+    ACCOUNT.elec && midnight(c.start) < octEnd ? computeFuel('electricity', ACCOUNT.elec, c, octEnd) : null,
+    edfFrom < midnight(c.end) ? computeEdf(c, Math.max(edfFrom, midnight(c.start))).catch(e => { brightErr = e.message; return null; }) : null,
     ACCOUNT.gas ? computeFuel('gas', ACCOUNT.gas, c) : null
   ]);
+  const E = O || B ? {days: {...(O && O.days), ...(B && B.days)}, missing: O ? O.missing : 0,
+    last: Math.max(O ? O.last : 0, B ? B.last : 0)} : null;
   const keys = [];
   for (let k = c.start; k < c.end; k = addDays(k, 1)) keys.push(k);
   const rows = keys.map(k => {
@@ -410,7 +512,7 @@ async function loadBill() {
   const last = Math.max(E ? E.last : 0, G ? G.last : 0);
   setStatus(last ? '數據更新至 ' + fmtStamp.format(last) : '本期未有數據');
   const miss = (E ? E.missing : 0) + (G ? G.missing : 0);
-  showMsg(miss ? `有 ${miss} 個時段搵唔到對應電價，未計入。` : '');
+  showMsg(brightErr || (miss ? `有 ${miss} 個時段搵唔到對應電價，未計入。` : ''), !!brightErr);
 }
 
 function renderBill() {
@@ -422,10 +524,15 @@ function renderBill() {
   const eEnergy = sum(r => r.e ? r.e.energy : 0);
   // load-shifting check: your weighted average vs plain average of the prices on offer
   let plain = 0, n = 0;
-  done.forEach(r => r.e && r.e.slots.forEach(s => { plain += s.rate; n++; }));
+  done.forEach(r => r.e && r.e.slots.forEach(s => {
+    const a = 'agile' in s ? s.agile : s.rate; // Octopus days were on Agile already
+    if (a != null) { plain += a; n++; }
+  }));
   const wavg = eKwh ? eEnergy / eKwh : 0, pavg = n ? plain / n : 0;
   const recent = done.slice(-7), perDay = recent.length ? recent.reduce((a, r) => a + r.total, 0) / recent.length : 0;
   const iogTot = sum(r => r.e ? r.e.iog : 0), iogDiff = iogTot - eTot;
+  const cmp = done.filter(r => r.e && r.e.agile != null);
+  const agTot = cmp.reduce((a, r) => a + r.e.agile, 0), agDiff = agTot - cmp.reduce((a, r) => a + r.e.total, 0);
   const remaining = rows.length - done.length;
   const proj = tot + perDay * remaining;
   const diff = pavg ? (wavg - pavg) / pavg * 100 : 0;
@@ -434,16 +541,17 @@ function renderBill() {
     kpi('預計全期', remaining ? gbp(proj) : gbp(tot), remaining ? `按最近 ${recent.length} 日平均 ${gbp(perDay)}/日推算` : '本期已完結'),
     kpi('電', gbp(eTot), `${eKwh.toFixed(1)} kWh`),
     kpi('燃氣', gbp(gTot), `${gKwh.toFixed(1)} kWh`),
-    kpi('如果用 IOG', eTot ? gbp(iogTot) : '—', eTot ? `電費比 Agile ${iogDiff > 0 ? '貴' : '平'} ${gbp(Math.abs(iogDiff))}（${iogDiff > 0 ? '留 Agile' : 'IOG 著數'}）` : ''),
+    kpi('如果用 IOG', eTot ? gbp(iogTot) : '—', eTot ? `電費比而家 ${iogDiff > 0 ? '貴' : '平'} ${gbp(Math.abs(iogDiff))}` : ''),
+    ...(cmp.length ? [kpi('如果仲用 Agile', gbp(agTot), `${cmp.length} 日 EDF 用電按 Agile 計：${agDiff > 0 ? '貴' : '平'} ${gbp(Math.abs(agDiff))}（${agDiff > 0 ? 'EDF 著數' : 'Agile 著數'}）`)] : []),
     kpi('你嘅電均價', wavg ? wavg.toFixed(2) + 'p' : '—', pavg ? `同期 Agile 簡單平均 ${pavg.toFixed(2)}p（${diff <= 0 ? '平' : '貴'} ${Math.abs(diff).toFixed(0)}%）· 未計VAT` : '未計VAT')
   ].join('');
   drawDaily(rows);
   $('dayRows').innerHTML = done.slice().reverse().map(r => {
     const e = r.e, g = r.g;
     return `<tr data-k="${r.k}"${r.k === selectedDay ? ' class="sel"' : ''}><td>${shortDate(r.k)}（${weekday(r.k)}）</td>
-      <td>${e ? e.kwh.toFixed(2) : '—'}</td><td>${e && e.kwh ? (e.energy / e.kwh).toFixed(2) : '—'}</td><td>${e ? e.total.toFixed(2) : '—'}</td><td>${e ? e.iog.toFixed(2) : '—'}</td>
+      <td>${e ? e.kwh.toFixed(2) : '—'}</td><td>${e && e.kwh ? (e.energy / e.kwh).toFixed(2) : '—'}</td><td>${e ? e.total.toFixed(2) : '—'}</td><td>${e ? e.iog.toFixed(2) : '—'}</td><td>${e && e.agile != null ? e.agile.toFixed(2) : '—'}</td>
       <td>${g ? g.kwh.toFixed(1) : '—'}</td><td>${g ? g.total.toFixed(2) : '—'}</td><td><b>${r.total.toFixed(2)}</b></td></tr>`;
-  }).join('') || '<tr><td colspan="8">本期未有數據</td></tr>';
+  }).join('') || '<tr><td colspan="9">本期未有數據</td></tr>';
   ['billPanel', 'tablePanel'].forEach(id => $(id).hidden = false);
   const pick = (selectedDay && E && E.days[selectedDay]) ? selectedDay : (done.length ? done[done.length - 1].k : null);
   if (pick) showDay(pick); else $('dayPanel').hidden = true;
@@ -515,9 +623,13 @@ async function run(withAccount) {
     if (withAccount && S) {
       setStatus('連接帳戶中…');
       if (!ACCOUNT) await loadAccount();
+      if (S.brightUser && S.edfStart && midnight(S.edfStart) <= Date.now()) {
+        ACCOUNT.onAgile = false;
+        $('pricePanel').hidden = true;
+      }
       await Promise.all([ACCOUNT.onAgile ? loadPrices() : null, loadBill()]);
-      if (ACCOUNT.elec && ACCOUNT.elecEnd < Date.now())
-        showMsg(`電費由 ${shortDate(dayKey(ACCOUNT.elecEnd))} 起已經唔係 Octopus 供應，之後只計燃氣。`);
+      if (ACCOUNT.elec && ACCOUNT.elecEnd < Date.now() && !S.brightUser)
+        showMsg(`電費由 ${shortDate(dayKey(ACCOUNT.elecEnd))} 起已經唔係 Octopus 供應。喺設定加 Bright 帳號就可以繼續追蹤 EDF 電費。`);
     } else {
       setStatus('載入電價中…');
       await loadPrices();
