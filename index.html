@@ -347,15 +347,20 @@ async function loadAccount() {
   if (!prop) throw new Error('帳戶內搵唔到地址資料。');
   ACCOUNT.elec = (prop.electricity_meter_points || []).find(m => !m.is_export);
   ACCOUNT.gas = (prop.gas_meter_points || [])[0];
+  ACCOUNT.onAgile = false;
   if (ACCOUNT.elec) {
     const now = Date.now();
     const a = ACCOUNT.elec.agreements.find(a => Date.parse(a.valid_from) <= now && (!a.valid_to || Date.parse(a.valid_to) > now));
     if (a) tariffCode = a.tariff_code;
+    ACCOUNT.onAgile = !!a && a.tariff_code.includes('AGILE');
+    // when electricity has moved to another supplier, only the Octopus period can be billed here
+    ACCOUNT.elecEnd = Math.max(...ACCOUNT.elec.agreements.map(a => a.valid_to ? Date.parse(a.valid_to) : Infinity));
   }
+  $('pricePanel').hidden = !ACCOUNT.onAgile;
 }
 
-async function computeFuel(kind, point, c) {
-  const from = midnight(c.start), to = midnight(c.end);
+async function computeFuel(kind, point, c, until = Infinity) {
+  const from = midnight(c.start), to = Math.min(midnight(c.end), until);
   const [cons, units, stand] = await Promise.all([
     fetchConsumption(kind, point, from, to, S.key),
     ratesForAgreements(kind, point.agreements, 'standard-unit-rates', from, to),
@@ -391,7 +396,7 @@ async function loadBill() {
   $('next').disabled = shift >= 0;
   setStatus('載入讀數中…');
   const [E, G] = await Promise.all([
-    ACCOUNT.elec ? computeFuel('electricity', ACCOUNT.elec, c) : null,
+    ACCOUNT.elec && midnight(c.start) < ACCOUNT.elecEnd ? computeFuel('electricity', ACCOUNT.elec, c, ACCOUNT.elecEnd) : null,
     ACCOUNT.gas ? computeFuel('gas', ACCOUNT.gas, c) : null
   ]);
   const keys = [];
@@ -510,7 +515,9 @@ async function run(withAccount) {
     if (withAccount && S) {
       setStatus('連接帳戶中…');
       if (!ACCOUNT) await loadAccount();
-      await Promise.all([loadPrices(), loadBill()]);
+      await Promise.all([ACCOUNT.onAgile ? loadPrices() : null, loadBill()]);
+      if (ACCOUNT.elec && ACCOUNT.elecEnd < Date.now())
+        showMsg(`電費由 ${shortDate(dayKey(ACCOUNT.elecEnd))} 起已經唔係 Octopus 供應，之後只計燃氣。`);
     } else {
       setStatus('載入電價中…');
       await loadPrices();
@@ -537,7 +544,7 @@ $('dailyChart').addEventListener('click', ev => { const g = ev.target.closest('g
 
 if (loadSettings()) { S = readSettings(); $('setupDetails').open = false; run(true); }
 else run(false);
-setInterval(() => { if (S) loadPrices().catch(() => {}); }, 30 * 60e3);
+setInterval(() => { if (S && ACCOUNT && ACCOUNT.onAgile) loadPrices().catch(() => {}); }, 30 * 60e3);
 </script>
 </body>
 </html>

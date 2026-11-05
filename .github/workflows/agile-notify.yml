@@ -1,11 +1,12 @@
 name: Agile cheap-price notifications
 
 on:
-  schedule:
-    # Hourly 16:20–21:20 UTC; Octopus publishes tomorrow's prices around 16:00 UK time.
-    - cron: "20 16-21 * * *"
-    # Keepalive: GitHub disables schedules after 60 days without repo activity.
-    - cron: "17 3 1,15 * *"
+  # Paused 2026-11-05: electricity moved from Agile to EDF. Restore these to resume.
+  # schedule:
+  #   # Hourly 16:20–21:20 UTC; Octopus publishes tomorrow's prices around 16:00 UK time.
+  #   - cron: "20 16-21 * * *"
+  #   # Keepalive: GitHub disables schedules after 60 days without repo activity.
+  #   - cron: "17 3 1,15 * *"
   workflow_dispatch:
     inputs:
       mode:
